@@ -154,6 +154,9 @@ typedef enum {
 #define	LEDMODE                     myFlags0.bit.b0
 #define CARSTATUS                  	myFlags0.bit.b1
 
+#define TIME100MSRELOAD				400
+#define TIME20MSRELOAD				80
+//
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -169,15 +172,15 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
 
 uint8_t		mode;
-uint8_t		time100ms, HBintervalWidth;
+uint8_t		HBintervalWidth;
+uint16_t	time100ms;
+uint8_t		time20ms;
 uint32_t 	mask;
 
 uint8_t 	posicionComand;
 _eProtocolo estadoProtocolo;
 _sDato 		datosComSerie, datosComWifi;
 //Wifi 		myWifi(datosComWifi.bufferRx,&datosComWifi.indexWriteRx, sizeof(datosComWifi.bufferRx));
-
-uint8_t		debounceTimer20ms;
 
 _uFlag		myFlags0;
 _sButton 	myButtons[NUMBUTTONS];
@@ -214,9 +217,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 	if(htim->Instance == TIM1){
 		if (time100ms)
 			time100ms--;
-		if (debounceTimer20ms)
-			debounceTimer20ms--;
-		if (myButtons[0].timePush < 500)
+		if (time20ms)
+			time20ms--;
+		if (myButtons[0].timePush < 20000)
 			myButtons[0].timePush++;
 	}
 }
@@ -304,16 +307,16 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
             if (buttons->event == EV_NOT_PRESSED) {
                 buttons->estado = RISING;
             } else {
-				if ((CARSTATUS == WORKING) && (buttons->timePush > 300)) { // SE DETIENE EL MODO, LED EN PERIODO DE 3 SEGUNDOS. MAS DE 3000ms
+				if ((CARSTATUS == WORKING) && (buttons->timePush > 12000)) { // SE DETIENE EL MODO, LED EN PERIODO DE 3 SEGUNDOS. MAS DE 3000ms
 					LEDMODE = THREESECONDS;
 					CARSTATUS = RESTING;
 					ledStatus();
 				} else {
-					if (buttons->timePush >= 500) { // SE VUELVE AL PERIODO DE 3 SEGUNDOS Y SE CANCELA EL INICIO. MAS DE 5000ms
+					if (buttons->timePush >= 20000) { // SE VUELVE AL PERIODO DE 3 SEGUNDOS Y SE CANCELA EL INICIO. MAS DE 5000ms
 						LEDMODE = THREESECONDS;
 						ledStatus();
 					} else {
-						if (buttons->timePush > 100) { // SE MANTIENE PRESIONADO EL BOTON POR MAS DE UN SEGUNDO, EMPIEZA SECUENCIA DE 1 SEG. MAS DE 1000ms
+						if (buttons->timePush > 4000) { // SE MANTIENE PRESIONADO EL BOTON POR MAS DE UN SEGUNDO, EMPIEZA SECUENCIA DE 1 SEG. MAS DE 1000ms
 							LEDMODE = ONESECOND;
 							ledStatus();
 						}
@@ -332,8 +335,8 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
         case RISING:
             if (buttons->event == EV_NOT_PRESSED) {
                 buttons->estado = UP;
-                if ((CARSTATUS == RESTING) && (buttons->timePush >= 10)) { // HACE ALGO SOLO SI SE SUELTA EL BOTON PRESIONANDOLO POR MAS DE 100 MS
-                    if (buttons->timePush <= 100) { // SI SE SUELTA ENTRE 100MS Y 1000MS SE CAMBIA DE MODO
+                if ((CARSTATUS == RESTING) && (buttons->timePush >= 400)) { // HACE ALGO SOLO SI SE SUELTA EL BOTON PRESIONANDOLO POR MAS DE 100 MS
+                    if (buttons->timePush <= 4000) { // SI SE SUELTA ENTRE 100MS Y 1000MS SE CAMBIA DE MODO
                         mode++;
                         if (mode == MODE3+1) {
                             mode = IDLE;
@@ -341,14 +344,14 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
                         LEDMODE = THREESECONDS;
                         ledStatus();
                     } else {
-                        if ((buttons->timePush < 500) && (mode != IDLE)) { // SI EL MODO DEL AUTO NO ES IDLE SE INICIA EL MODO SELECCIONADO Y SE PONE EL LED EN MODO ON. MENOS DE 5000ms
+                        if ((buttons->timePush < 20000) && (mode != IDLE)) { // SI EL MODO DEL AUTO NO ES IDLE SE INICIA EL MODO SELECCIONADO Y SE PONE EL LED EN MODO ON. MENOS DE 5000ms
                             LEDMODE = THREESECONDS;
                             CARSTATUS = WORKING;
                             ledStatus();
                         }
                     }
                 } else {
-                    if (buttons->timePush <= 300) { // SI NO SE SUELTA DESPUES DE LOS 3000 MS SE VUELVE A TRABAJAR
+                    if (buttons->timePush <= 12000) { // SI NO SE SUELTA DESPUES DE LOS 3000 MS SE VUELVE A TRABAJAR
                         LEDMODE = THREESECONDS;
                         ledStatus();
                     }
@@ -362,12 +365,11 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
 
 void inicializaButtons(_sButton *buttons) {
     buttons->estado = UP;
-    buttons->timePush = 500;
+    buttons->timePush = 20000;
     buttons->event = EV_NONE;
 }
 
 void debounceTask() {
-	debounceTimer20ms = 2;
     for (uint8_t index = 0; index < NUMBUTTONS; index++){
         if (HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) & (1 << index)){
             myButtons[index].event = EV_NOT_PRESSED;
@@ -717,9 +719,10 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim1);
   HAL_UART_Receive_IT(&huart1, &datosComSerie.bufferRx[datosComSerie.indexWriteRx], 1);
 
-  time100ms=10;
-  LEDMODE=THREESECONDS;
-  mask=0x55555555;
+  time100ms = TIME100MSRELOAD;
+  time20ms = TIME20MSRELOAD;
+  LEDMODE = THREESECONDS;
+  mask = 0x55555555;
   HBintervalWidth = THREESECONDSINTERVAL;
 
   mode=IDLE;
@@ -728,8 +731,6 @@ int main(void)
   for (uint8_t index = 0; index < NUMBUTTONS; index++) {
 	  inicializaButtons(&myButtons[index]);
   }
-  debounceTimer20ms = 0;
-
 
   /* USER CODE END 2 */
 
@@ -743,11 +744,12 @@ int main(void)
 	if (!time100ms) {
 		heartBeat();
 		imAlive();
-		time100ms = 10;
+		time100ms = TIME100MSRELOAD;
 	}
-	if (!debounceTimer20ms)
+	if (!time20ms) {
 		debounceTask();
-
+		time20ms = TIME20MSRELOAD;
+	}
 	//myWifi.taskWifi();
 	comunicationsTask(&datosComSerie,true);
 	comunicationsTask(&datosComWifi,false);
@@ -815,7 +817,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 71;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 10000;
+  htim1.Init.Period = 250;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -887,6 +889,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
