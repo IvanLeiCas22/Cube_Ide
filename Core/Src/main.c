@@ -18,12 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
 #include <stdbool.h>
 #include <string.h>
+#include "usbd_cdc_if.h"
 //#include "mbed.h"
 //#include "wifi.h"
 //#include "config.h"
@@ -154,8 +156,12 @@ typedef enum {
 #define	LEDMODE                     myFlags0.bit.b0
 #define CARSTATUS                  	myFlags0.bit.b1
 
-#define TIME100MSRELOAD				400
-#define TIME20MSRELOAD				80
+#define EQ5000MS					20000
+#define EQ3000MS					12000
+#define EQ1000MS					4000
+#define EQ100MS						400					//TIM1 250us por cuenta, que equivale a 0,25 ms, entonces 400 cuentas -> 100ms
+#define EQ20MS						80
+
 //
 /* USER CODE END PD */
 
@@ -179,11 +185,14 @@ uint32_t 	mask;
 
 uint8_t 	posicionComand;
 _eProtocolo estadoProtocolo;
-_sDato 		datosComSerie, datosComWifi;
+_sDato 		datosComSerie, datosComWifi, datosComUSB;
 //Wifi 		myWifi(datosComWifi.bufferRx,&datosComWifi.indexWriteRx, sizeof(datosComWifi.bufferRx));
 
 _uFlag		myFlags0;
 _sButton 	myButtons[NUMBUTTONS];
+
+uint8_t		rxUSBData, newData;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -206,6 +215,8 @@ void decodeData(_sDato *, uint8_t COMAND);
 void comunicationsTask(_sDato *datosCom, uint8_t source);
 void autoConnectWifi(void);
 
+void USBReceive(uint8_t *buf, uint16_t len);	//Misma estructura que el puntero a funcion creado en usbd_cdc_if.h
+
 //int Decode(uint8_t index);
 //void decodeData(uint8_t comand);
 
@@ -219,10 +230,20 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 			time100ms--;
 		if (time20ms)
 			time20ms--;
-		if (myButtons[0].timePush < 20000)
+		if (myButtons[0].timePush < EQ5000MS)
 			myButtons[0].timePush++;
 	}
 }
+
+void USBReceive(uint8_t *buf, uint16_t len){
+
+	//memcpy(&datosComUSB.bufferRx[datosComUSB.indexWriteRx], buf, len);
+	//datosComUSB.indexWriteRx += len;
+	//datosComUSB.newData = true;
+	//rxUSBData = buf[0];
+	//newData = 1;
+}
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
 	if(huart->Instance==USART1){
 		datosComSerie.indexWriteRx++;
@@ -307,16 +328,16 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
             if (buttons->event == EV_NOT_PRESSED) {
                 buttons->estado = RISING;
             } else {
-				if ((CARSTATUS == WORKING) && (buttons->timePush > 12000)) { // SE DETIENE EL MODO, LED EN PERIODO DE 3 SEGUNDOS. MAS DE 3000ms
+				if ((CARSTATUS == WORKING) && (buttons->timePush > EQ3000MS)) { // SE DETIENE EL MODO, LED EN PERIODO DE 3 SEGUNDOS. MAS DE 3000ms
 					LEDMODE = THREESECONDS;
 					CARSTATUS = RESTING;
 					ledStatus();
 				} else {
-					if (buttons->timePush >= 20000) { // SE VUELVE AL PERIODO DE 3 SEGUNDOS Y SE CANCELA EL INICIO. MAS DE 5000ms
+					if (buttons->timePush >= EQ5000MS) { // SE VUELVE AL PERIODO DE 3 SEGUNDOS Y SE CANCELA EL INICIO. MAS DE 5000ms
 						LEDMODE = THREESECONDS;
 						ledStatus();
 					} else {
-						if (buttons->timePush > 4000) { // SE MANTIENE PRESIONADO EL BOTON POR MAS DE UN SEGUNDO, EMPIEZA SECUENCIA DE 1 SEG. MAS DE 1000ms
+						if (buttons->timePush > EQ1000MS) { // SE MANTIENE PRESIONADO EL BOTON POR MAS DE UN SEGUNDO, EMPIEZA SECUENCIA DE 1 SEG. MAS DE 1000ms
 							LEDMODE = ONESECOND;
 							ledStatus();
 						}
@@ -335,8 +356,8 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
         case RISING:
             if (buttons->event == EV_NOT_PRESSED) {
                 buttons->estado = UP;
-                if ((CARSTATUS == RESTING) && (buttons->timePush >= 400)) { // HACE ALGO SOLO SI SE SUELTA EL BOTON PRESIONANDOLO POR MAS DE 100 MS
-                    if (buttons->timePush <= 4000) { // SI SE SUELTA ENTRE 100MS Y 1000MS SE CAMBIA DE MODO
+                if ((CARSTATUS == RESTING) && (buttons->timePush >= EQ100MS)) { // HACE ALGO SOLO SI SE SUELTA EL BOTON PRESIONANDOLO POR MAS DE 100 MS
+                    if (buttons->timePush <= EQ1000MS) { // SI SE SUELTA ENTRE 100MS Y 1000MS SE CAMBIA DE MODO
                         mode++;
                         if (mode == MODE3+1) {
                             mode = IDLE;
@@ -344,14 +365,14 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
                         LEDMODE = THREESECONDS;
                         ledStatus();
                     } else {
-                        if ((buttons->timePush < 20000) && (mode != IDLE)) { // SI EL MODO DEL AUTO NO ES IDLE SE INICIA EL MODO SELECCIONADO Y SE PONE EL LED EN MODO ON. MENOS DE 5000ms
+                        if ((buttons->timePush < EQ5000MS) && (mode != IDLE)) { // SI EL MODO DEL AUTO NO ES IDLE SE INICIA EL MODO SELECCIONADO Y SE PONE EL LED EN MODO ON. MENOS DE 5000ms
                             LEDMODE = THREESECONDS;
                             CARSTATUS = WORKING;
                             ledStatus();
                         }
                     }
                 } else {
-                    if (buttons->timePush <= 12000) { // SI NO SE SUELTA DESPUES DE LOS 3000 MS SE VUELVE A TRABAJAR
+                    if (buttons->timePush <= EQ3000MS) { // SI NO SE SUELTA DESPUES DE LOS 3000 MS SE VUELVE A TRABAJAR
                         LEDMODE = THREESECONDS;
                         ledStatus();
                     }
@@ -365,7 +386,7 @@ void buttonsStatus(_sButton *buttons, uint8_t index) {
 
 void inicializaButtons(_sButton *buttons) {
     buttons->estado = UP;
-    buttons->timePush = 20000;
+    buttons->timePush = EQ5000MS;
     buttons->event = EV_NONE;
 }
 
@@ -714,13 +735,14 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM1_Init();
   MX_USART1_UART_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
-
+  CDC_AttachRxData(USBReceive); // Se hace un attach a la funcion USBReceive
   HAL_TIM_Base_Start_IT(&htim1);
   HAL_UART_Receive_IT(&huart1, &datosComSerie.bufferRx[datosComSerie.indexWriteRx], 1);
 
-  time100ms = TIME100MSRELOAD;
-  time20ms = TIME20MSRELOAD;
+  time100ms = EQ100MS;
+  time20ms = EQ20MS;
   LEDMODE = THREESECONDS;
   mask = 0x55555555;
   HBintervalWidth = THREESECONDSINTERVAL;
@@ -744,11 +766,15 @@ int main(void)
 	if (!time100ms) {
 		heartBeat();
 		imAlive();
-		time100ms = TIME100MSRELOAD;
+		time100ms = EQ100MS;
 	}
 	if (!time20ms) {
 		debounceTask();
-		time20ms = TIME20MSRELOAD;
+		time20ms = EQ20MS;
+	}
+	if(newData){
+		if(CDC_Transmit_FS(&rxUSBData, 1) == USBD_OK)
+			newData = 0;
 	}
 	//myWifi.taskWifi();
 	comunicationsTask(&datosComSerie,true);
@@ -765,6 +791,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -791,6 +818,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
