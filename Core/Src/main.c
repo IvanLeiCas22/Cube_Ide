@@ -67,7 +67,7 @@ typedef enum{
     NBYTES,
     TOKEN,
     PAYLOAD
-}_eProtocolo;
+}_eProtocol;
 
 typedef struct{
     //uint8_t timeOut;         //!< TiemOut para reiniciar la máquina si se interrumpe la comunicación
@@ -80,6 +80,12 @@ typedef struct{
     uint8_t bufferRx[256];   //!< Buffer circular de recepción
     uint8_t bufferTx[256];   //!< Buffer circular de transmisión
 }_sDato ;
+
+typedef enum{
+	USART,
+	WIFI,
+	USB_MICRO
+}_eCommunicationProtocols;
 
 typedef enum{
     ACK=0x0D,
@@ -184,14 +190,12 @@ uint8_t		time20ms;
 uint32_t 	mask;
 
 uint8_t 	posicionComand;
-_eProtocolo estadoProtocolo;
+_eProtocol 	protocolStatus;
 _sDato 		datosComSerie, datosComWifi, datosComUSB;
 //Wifi 		myWifi(datosComWifi.bufferRx,&datosComWifi.indexWriteRx, sizeof(datosComWifi.bufferRx));
 
 _uFlag		myFlags0;
 _sButton 	myButtons[NUMBUTTONS];
-
-uint8_t		rxUSBData, newData;
 
 /* USER CODE END PV */
 
@@ -212,9 +216,8 @@ void debounceTask();
 
 void decodeProtocol(_sDato *);
 void decodeData(_sDato *, uint8_t COMAND);
-void comunicationsTask(_sDato *datosCom, uint8_t source);
+void communicationTask(_sDato *datosCom, uint8_t source);
 void autoConnectWifi(void);
-
 void USBReceive(uint8_t *buf, uint16_t len);	//Misma estructura que el puntero a funcion creado en usbd_cdc_if.h
 
 //int Decode(uint8_t index);
@@ -236,12 +239,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 }
 
 void USBReceive(uint8_t *buf, uint16_t len){
-
-	//memcpy(&datosComUSB.bufferRx[datosComUSB.indexWriteRx], buf, len);
-	//datosComUSB.indexWriteRx += len;
-	//datosComUSB.newData = true;
-	//rxUSBData = buf[0];
-	//newData = 1;
+	memcpy(&datosComUSB.bufferRx[datosComUSB.indexWriteRx], buf, len);
+	datosComUSB.indexWriteRx += len;
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
@@ -314,7 +313,8 @@ void ledStatus() {
 }
 
 void imAlive() {
-	decodeData(&datosComSerie, GETALIVE);
+	//decodeData(&datosComSerie, GETALIVE);
+	//decodeData(&datosComUSB, GETALIVE);
 }
 
 void buttonsStatus(_sButton *buttons, uint8_t index) {
@@ -406,51 +406,51 @@ void decodeProtocol(_sDato *datosCom) {
     uint8_t indexWriteRxCopy=datosCom->indexWriteRx;
 
     while (datosCom->indexReadRx!=indexWriteRxCopy) {
-        switch (estadoProtocolo) {
+        switch (protocolStatus) {
             case START:
                 if (datosCom->bufferRx[datosCom->indexReadRx++]=='U'){
-                    estadoProtocolo=HEADER_1;
+                    protocolStatus=HEADER_1;
                     datosCom->cheksumRx=0;
                 }
                 break;
             case HEADER_1:
                 if (datosCom->bufferRx[datosCom->indexReadRx++]=='N')
-                    estadoProtocolo=HEADER_2;
+                    protocolStatus=HEADER_2;
                 else{
                     datosCom->indexReadRx--;
-                    estadoProtocolo=START;
+                    protocolStatus=START;
                 }
                 break;
             case HEADER_2:
                 if (datosCom->bufferRx[datosCom->indexReadRx++]=='E')
-                    estadoProtocolo=HEADER_3;
+                    protocolStatus=HEADER_3;
                 else{
                     datosCom->indexReadRx--;
-                    estadoProtocolo=START;
+                    protocolStatus=START;
                 }
                 break;
 			case HEADER_3:
 				if (datosCom->bufferRx[datosCom->indexReadRx++]=='R')
-					estadoProtocolo=NBYTES;
+					protocolStatus=NBYTES;
 				else{
 					datosCom->indexReadRx--;
-					estadoProtocolo=START;
+					protocolStatus=START;
 				}
 				break;
             case NBYTES:
                 datosCom->indexStart=datosCom->indexReadRx; // 4 posiciones mas adelante tenes el ID en nuestro caso, por los datos del numero de auto y uno mas
                 posicionComand = datosCom->indexStart + POSID;
                 nBytes=datosCom->bufferRx[datosCom->indexReadRx++];
-                estadoProtocolo=TOKEN;
+                protocolStatus=TOKEN;
                 break;
             case TOKEN:
                 if (datosCom->bufferRx[datosCom->indexReadRx++]==':'){
-                    estadoProtocolo=PAYLOAD;
+                    protocolStatus=PAYLOAD;
                     datosCom->cheksumRx ='U'^'N'^'E'^'R'^nBytes^':';
                 }
                 else{
                     datosCom->indexReadRx--;
-                    estadoProtocolo=START;
+                    protocolStatus=START;
                 }
                 break;
             case PAYLOAD:
@@ -459,14 +459,14 @@ void decodeProtocol(_sDato *datosCom) {
                 }
                 nBytes--;
                 if(nBytes<=0){
-                    estadoProtocolo=START;
+                    protocolStatus=START;
                     if(datosCom->cheksumRx == datosCom->bufferRx[datosCom->indexReadRx]){
                         decodeData(datosCom, datosCom->bufferRx[posicionComand]); //!< PASO LA ESTRUCTURA DATOSCOM Y PASO EL COMANDO
                     }
                 }
                 break;
             default:
-                estadoProtocolo = START;
+                protocolStatus = START;
                 break;
         }
     }
@@ -674,20 +674,30 @@ void decodeData(_sDato *datosCom, uint8_t COMAND) {
         datosCom->bufferTx[datosCom->indexWriteTx++] = cheksum;
 }
 
-void comunicationsTask(_sDato *datosCom, uint8_t source){
+void communicationTask(_sDato *datosCom, uint8_t source){
     if(datosCom->indexReadRx!=datosCom->indexWriteRx ){
         decodeProtocol(datosCom);
     }
-
     if(datosCom->indexReadTx!=datosCom->indexWriteTx){
-        if(source){
-        	if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TXE)){
-				USART1->DR = datosCom->bufferTx[datosCom->indexReadTx++];
-				//HAL_UART_Transmit_IT(&huart1, &datosCom->bufferTx[datosCom->indexReadTx++], 1); //La anterior linea hace lo mismo
-				//HAL_UART_Transmit(&huart1, &datosCom->bufferTx[datosCom->indexReadTx++], 1, 0);
-			}
-        } //else
-           // myWifi.writeWifiData(&datosCom->bufferTx[datosCom->indexReadTx++],1);
+    	switch (source) {
+			case USART:
+				if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TXE)){
+					USART1->DR = datosCom->bufferTx[datosCom->indexReadTx++];
+					//HAL_UART_Transmit_IT(&huart1, &datosCom->bufferTx[datosCom->indexReadTx++], 1); //La anterior linea hace lo mismo
+					//HAL_UART_Transmit(&huart1, &datosCom->bufferTx[datosCom->indexReadTx++], 1, 0);
+				}
+				break;
+			case WIFI:
+				// myWifi.writeWifiData(&datosCom->bufferTx[datosCom->indexReadTx++],1);
+				break;
+			case USB_MICRO:
+				//CDC_Transmit_FS(&rxUSBData, 1);
+				if(CDC_Transmit_FS(&datosCom->bufferTx[datosCom->indexReadTx], 1) == USBD_OK)
+					datosCom->indexReadTx++;
+				break;
+			default:
+				break;
+		}
     }
 }
 
@@ -740,6 +750,8 @@ int main(void)
   CDC_AttachRxData(USBReceive); // Se hace un attach a la funcion USBReceive
   HAL_TIM_Base_Start_IT(&htim1);
   HAL_UART_Receive_IT(&huart1, &datosComSerie.bufferRx[datosComSerie.indexWriteRx], 1);
+  //USBD_CDC_SetTxBuffer(&hUsbDeviceFS, &datosComUSB.bufferRx[datosComSerie.indexWriteRx], 0);
+  //USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &datosComUSB.bufferTx[datosComSerie.indexWriteRx]);
 
   time100ms = EQ100MS;
   time20ms = EQ20MS;
@@ -772,13 +784,10 @@ int main(void)
 		debounceTask();
 		time20ms = EQ20MS;
 	}
-	if(newData){
-		if(CDC_Transmit_FS(&rxUSBData, 1) == USBD_OK)
-			newData = 0;
-	}
 	//myWifi.taskWifi();
-	comunicationsTask(&datosComSerie,true);
-	comunicationsTask(&datosComWifi,false);
+	communicationTask(&datosComSerie, USART);
+	communicationTask(&datosComWifi, WIFI);
+	communicationTask(&datosComUSB, USB_MICRO);
   }
   /* USER CODE END 3 */
 }

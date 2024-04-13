@@ -155,6 +155,8 @@ static int8_t CDC_Init_FS(void)
 {
   /* USER CODE BEGIN 3 */
   /* Set Application Buffers */
+//	USBD_CDC_SetTxBuffer(&hUsbDeviceFS, &datosComUSB.bufferRx[datosComSerie.indexWriteRx], 0);
+//	USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &datosComUSB.bufferTx[datosComSerie.indexWriteRx]);
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, 0);
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
   return (USBD_OK);
@@ -278,7 +280,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 	if(aPtrFunRx != NULL)
 		aPtrFunRx(Buf, *Len);
 
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);		//Creado por el mismo programa
+  //USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);		//Creado por el mismo programa, esta linea no es necesaria como lo uso yo
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);
   /* USER CODE END 6 */
